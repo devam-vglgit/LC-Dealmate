@@ -1,3 +1,8 @@
+// In dev, Vite proxies /api to the local backend, so the default empty base is
+// right. In a deployed build the backend lives on a different host — set
+// VITE_API_BASE at build time (e.g. https://lc-dealmate-api.onrender.com).
+const API_BASE = (import.meta.env?.VITE_API_BASE || '').replace(/\/+$/, '')
+
 const TOKEN_KEY = 'lc_dealmate_token'
 let token = localStorage.getItem(TOKEN_KEY) || null
 let onUnauthorized = () => {}
@@ -32,7 +37,7 @@ function guard(res) {
 }
 
 export async function login(username, password) {
-  const res = await fetch('/api/login', {
+  const res = await fetch(`${API_BASE}/api/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password }),
@@ -51,20 +56,20 @@ export function logout() {
 }
 
 export async function fetchHealth() {
-  const res = await fetch('/api/health')
+  const res = await fetch(`${API_BASE}/api/health`)
   if (!res.ok) throw new Error(`health: ${res.status}`)
   return res.json()
 }
 
 export async function fetchInventory() {
-  const res = guard(await fetch('/api/inventory', { headers: headers() }))
+  const res = guard(await fetch(`${API_BASE}/api/inventory`, { headers: headers() }))
   if (!res.ok) throw new Error(`inventory: ${res.status}`)
   return res.json()
 }
 
 export async function addSoftware(item) {
   const res = guard(
-    await fetch('/api/inventory', {
+    await fetch(`${API_BASE}/api/inventory`, {
       method: 'POST',
       headers: headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(item),
@@ -83,7 +88,7 @@ export async function addSoftware(item) {
 
 export async function deleteSoftware(id) {
   const res = guard(
-    await fetch(`/api/inventory/${encodeURIComponent(id)}`, {
+    await fetch(`${API_BASE}/api/inventory/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       headers: headers(),
     }),
@@ -93,14 +98,14 @@ export async function deleteSoftware(id) {
 }
 
 export async function listConversations() {
-  const res = guard(await fetch('/api/conversations', { headers: headers() }))
+  const res = guard(await fetch(`${API_BASE}/api/conversations`, { headers: headers() }))
   if (!res.ok) throw new Error(`conversations: ${res.status}`)
   return (await res.json()).conversations
 }
 
 export async function getConversation(id) {
   const res = guard(
-    await fetch(`/api/conversations/${encodeURIComponent(id)}`, { headers: headers() }),
+    await fetch(`${API_BASE}/api/conversations/${encodeURIComponent(id)}`, { headers: headers() }),
   )
   if (!res.ok) throw new Error(`conversation: ${res.status}`)
   return res.json()
@@ -108,7 +113,7 @@ export async function getConversation(id) {
 
 export async function renameConversation(id, title) {
   const res = guard(
-    await fetch(`/api/conversations/${encodeURIComponent(id)}/rename`, {
+    await fetch(`${API_BASE}/api/conversations/${encodeURIComponent(id)}/rename`, {
       method: 'POST',
       headers: headers({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ title }),
@@ -120,7 +125,7 @@ export async function renameConversation(id, title) {
 
 export async function deleteConversation(id) {
   const res = guard(
-    await fetch(`/api/conversations/${encodeURIComponent(id)}`, {
+    await fetch(`${API_BASE}/api/conversations/${encodeURIComponent(id)}`, {
       method: 'DELETE',
       headers: headers(),
     }),
@@ -135,7 +140,7 @@ export async function deleteConversation(id) {
  * EventSource can't POST, so we read the SSE body off fetch directly.
  */
 export async function streamChat({ message, conversationId, focusId }, onEvent, signal) {
-  const res = await fetch('/api/chat', {
+  const res = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
     headers: headers({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({

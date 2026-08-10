@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Literal
 
 from pathlib import Path
@@ -24,12 +25,17 @@ from .agent import MODEL, credentials_configured, stream_reply  # noqa: E402
 
 app = FastAPI(title="LC DealMate", version="0.1.0")
 
+# Local dev origins are always allowed; a deployed frontend (e.g. Netlify) adds
+# its own via LC_CORS_ORIGINS, comma-separated.
+_DEV_ORIGINS = [
+    "http://localhost:5173", "http://127.0.0.1:5173",
+    "http://localhost:5174", "http://127.0.0.1:5174",
+]
+_EXTRA_ORIGINS = [o.strip() for o in os.getenv("LC_CORS_ORIGINS", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173", "http://127.0.0.1:5173",
-        "http://localhost:5174", "http://127.0.0.1:5174",
-    ],
+    allow_origins=_DEV_ORIGINS + _EXTRA_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

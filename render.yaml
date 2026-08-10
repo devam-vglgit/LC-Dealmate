@@ -1,0 +1,34 @@
+# Deploys the FastAPI backend on Render. Netlify handles the frontend only.
+#
+# After the first deploy, set these in the Render dashboard (Environment tab) —
+# they are deliberately not in this file so secrets stay out of the repo:
+#   ANTHROPIC_API_KEY   your Anthropic key
+#   LC_AUTH_USERNAME    portal login
+#   LC_AUTH_PASSWORD    portal password
+#   LC_CORS_ORIGINS     your Netlify URL, e.g. https://lcdealmate.netlify.app
+#
+# ⚠️ Storage: inventory and chat history are JSON files on local disk. Render's
+# free tier has an ephemeral filesystem, so both reset on every deploy/restart.
+# Attach a persistent disk (paid) or move storage to a database to keep them.
+
+services:
+  - type: web
+    name: lc-dealmate-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.4"
+      - key: LC_SESSION_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: LC_AUTH_USERNAME
+        sync: false
+      - key: LC_AUTH_PASSWORD
+        sync: false
+      - key: LC_CORS_ORIGINS
+        sync: false
