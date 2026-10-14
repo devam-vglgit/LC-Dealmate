@@ -64,6 +64,11 @@ def _summary(conv: dict[str, Any]) -> dict[str, Any]:
         "id": conv["id"],
         "title": conv.get("title") or "New chat",
         "focus_id": conv.get("focus_id"),
+        "attachment": (
+            {"id": conv["attachment_id"], "filename": conv.get("attachment_filename")}
+            if conv.get("attachment_id")
+            else None
+        ),
         "created_at": conv.get("created_at"),
         "updated_at": conv.get("updated_at"),
         "message_count": len(conv.get("messages", [])),
@@ -91,6 +96,8 @@ def create(title: str, focus_id: str | None = None) -> dict[str, Any]:
         "id": f"conv-{uuid.uuid4().hex[:10]}",
         "title": title or "New chat",
         "focus_id": focus_id,
+        "attachment_id": None,
+        "attachment_filename": None,
         "created_at": _now(),
         "updated_at": _now(),
         "messages": [],
@@ -100,6 +107,18 @@ def create(title: str, focus_id: str | None = None) -> dict[str, Any]:
         data["conversations"].append(conv)
         _write(data)
     return conv
+
+
+def set_attachment(conversation_id: str, attachment_id: str, filename: str) -> None:
+    with _LOCK:
+        data = _read()
+        for conv in data["conversations"]:
+            if conv.get("id") == conversation_id:
+                conv["attachment_id"] = attachment_id
+                conv["attachment_filename"] = filename
+                conv["updated_at"] = _now()
+                _write(data)
+                return
 
 
 def append_message(conversation_id: str, message: dict[str, Any]) -> None:
@@ -136,17 +155,15 @@ def delete(conversation_id: str) -> bool:
     return True
 
 
-def history_for_model(conversation_id: str) -> list[dict[str, str]]:
-    """Just the role/content pairs — the UI-only fields (searches, sources) are
-    stripped, since the API rejects unknown keys on a message."""
+def history_for_model(conversation_id: str) -> list[dict[str, Any]]:
+    """Role/content pairs only. UI fields (searches, sources) are stripped."""
     conv = get(conversation_id)
     if not conv:
         return []
-    out: list[dict[str, str]] = []
+    out: list[dict[str, Any]] = []
     for m in conv.get("messages", []):
         role, content = m.get("role"), m.get("content")
-        # An aborted turn can leave an assistant message with no text; replaying
-        # an empty content block is a 400, so drop it.
-        if role in ("user", "assistant") and content:
-            out.append({"role": role, "content": content})
+        if role not in ("user", "assistant") or not content:
+            continue
+        out.append({"role": role, "content": content})
     return out

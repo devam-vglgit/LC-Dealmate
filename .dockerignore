@@ -1,0 +1,13 @@
+backend/.venv
+backend/.env
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+.git
+.claude
+backend/data/conversations.json
+backend/data/cms_snapshot.json
+*.env
+test.env
+peek_table.py

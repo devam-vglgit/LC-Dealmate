@@ -1,6 +1,5 @@
-// In dev, Vite proxies /api to the local backend, so the default empty base is
-// right. In a deployed build the backend lives on a different host — set
-// VITE_API_BASE at build time (e.g. https://lc-dealmate-api.onrender.com).
+// In Vite dev, /api is proxied to the backend. In CMS production the SPA is
+// served from the same origin as FastAPI, so the empty default is correct.
 const API_BASE = (import.meta.env?.VITE_API_BASE || '').replace(/\/+$/, '')
 
 const TOKEN_KEY = 'lc_dealmate_token'
@@ -26,7 +25,6 @@ function headers(extra = {}) {
   return token ? { ...extra, Authorization: `Bearer ${token}` } : extra
 }
 
-/** Centralises the 401 path so every caller can't forget it. */
 function guard(res) {
   if (res.status === 401) {
     setToken(null)
@@ -51,6 +49,22 @@ export async function login(username, password) {
   return data
 }
 
+/** Exchange a CMS iframe JWT (?token=) for a DealMate session. */
+export async function authCms(cmsToken) {
+  const res = await fetch(`${API_BASE}/api/auth/cms`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: cmsToken }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => null)
+    throw new Error(body?.detail || `CMS sign-in failed (${res.status})`)
+  }
+  const data = await res.json()
+  setToken(data.token)
+  return data
+}
+
 export function logout() {
   setToken(null)
 }
@@ -67,34 +81,28 @@ export async function fetchInventory() {
   return res.json()
 }
 
-export async function addSoftware(item) {
+/**
+ * Downloads a CMS contract file to this browser only (blob URL).
+ * The file is not sent to the model.
+ */
+export async function fetchContractDocument(id) {
   const res = guard(
-    await fetch(`${API_BASE}/api/inventory`, {
-      method: 'POST',
-      headers: headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(item),
+    await fetch(`${API_BASE}/api/cms/contracts/${encodeURIComponent(id)}/document`, {
+      headers: headers(),
     }),
   )
   if (!res.ok) {
     const body = await res.json().catch(() => null)
-    const detail = body?.detail
-    const message = Array.isArray(detail)
-      ? detail.map((d) => d.msg).join('; ')
-      : detail || `Request failed (${res.status})`
-    throw new Error(message)
+    throw new Error(body?.detail || `Could not open that PDF (${res.status})`)
   }
-  return res.json()
-}
-
-export async function deleteSoftware(id) {
-  const res = guard(
-    await fetch(`${API_BASE}/api/inventory/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: headers(),
-    }),
-  )
-  if (!res.ok) throw new Error(`delete failed (${res.status})`)
-  return res.json()
+  const blob = await res.blob()
+  const header = res.headers.get('content-disposition') || ''
+  const match = header.match(/filename="([^"]+)"/)
+  return {
+    url: URL.createObjectURL(blob),
+    type: blob.type || 'application/pdf',
+    filename: match ? match[1] : 'contract.pdf',
+  }
 }
 
 export async function listConversations() {
@@ -137,9 +145,29 @@ export async function deleteConversation(id) {
 /**
  * Sends one new message and invokes `onEvent` for each streamed event. Only the
  * message goes over the wire — the server replays stored history to the model.
- * EventSource can't POST, so we read the SSE body off fetch directly.
  */
-export async function streamChat({ message, conversationId, focusId }, onEvent, signal) {
+export async function uploadAttachment(file) {
+  const body = new FormData()
+  body.append('file', file)
+  const res = guard(
+    await fetch(`${API_BASE}/api/attachments`, {
+      method: 'POST',
+      headers: headers(),
+      body,
+    }),
+  )
+  if (!res.ok) {
+    const err = await res.json().catch(() => null)
+    throw new Error(err?.detail || `Upload failed (${res.status})`)
+  }
+  return res.json()
+}
+
+export function attachmentUrl(id) {
+  return `${API_BASE}/api/attachments/${encodeURIComponent(id)}`
+}
+
+export async function streamChat({ message, conversationId, focusId, attachmentId }, onEvent, signal) {
   const res = await fetch(`${API_BASE}/api/chat`, {
     method: 'POST',
     headers: headers({ 'Content-Type': 'application/json' }),
@@ -147,6 +175,7 @@ export async function streamChat({ message, conversationId, focusId }, onEvent, 
       message,
       ...(conversationId ? { conversation_id: conversationId } : {}),
       ...(focusId ? { focus_id: focusId } : {}),
+      ...(attachmentId ? { attachment_id: attachmentId } : {}),
     }),
     signal,
   })
@@ -170,7 +199,6 @@ export async function streamChat({ message, conversationId, focusId }, onEvent, 
     if (done) break
     buffer += decoder.decode(value, { stream: true })
 
-    // SSE frames are separated by a blank line.
     let split
     while ((split = buffer.indexOf('\n\n')) !== -1) {
       const frame = buffer.slice(0, split)

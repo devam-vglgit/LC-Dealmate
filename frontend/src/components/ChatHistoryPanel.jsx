@@ -30,10 +30,6 @@ export default function ChatHistoryPanel({
         </button>
       </div>
 
-      <button className="new-chat-btn" onClick={onNew}>
-        + New chat
-      </button>
-
       {conversations.length === 0 ? (
         <p className="muted small">No conversations yet. Ask something to start one.</p>
       ) : (

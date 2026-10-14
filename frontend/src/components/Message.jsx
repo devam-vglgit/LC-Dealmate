@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -15,59 +16,89 @@ function Thinking({ text }) {
   )
 }
 
+function ExpandableTable({ node: _node, children, ...props }) {
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.body.style.overflow = prev
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div className="table-frame">
+      <div className="table-toolbar">
+        <button type="button" className="table-expand-btn" onClick={() => setOpen(true)}>
+          Expand table
+        </button>
+      </div>
+      <div className="table-scroll">
+        <table {...props}>{children}</table>
+      </div>
+      {open &&
+        createPortal(
+          <div className="table-fs" role="dialog" aria-modal="true" aria-label="Full screen table">
+            <div className="table-fs-bar">
+              <span className="muted small">Full screen</span>
+              <button type="button" className="table-fs-back" onClick={() => setOpen(false)}>
+                Back to chat
+              </button>
+            </div>
+            <div className="table-fs-body">
+              <table {...props}>{children}</table>
+            </div>
+          </div>,
+          document.body,
+        )}
+    </div>
+  )
+}
+
+function ExternalLink({ node: _node, href, children, ...props }) {
+  const external = /^https?:\/\//i.test(href || '')
+  if (!external) {
+    return (
+      <a href={href} {...props}>
+        {children}
+      </a>
+    )
+  }
+  return (
+    <a href={href} {...props} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  )
+}
+
 function Searches({ queries }) {
   if (!queries?.length) return null
-
-  // Real query text only arrives once the turn ends; until then these are
-  // placeholders, so show a single running count instead of N blank chips.
   const known = queries.filter(Boolean)
   if (!known.length) {
     return (
       <div className="searches">
-        <span className="chip chip-search">
-          🔍 Searching… ({queries.length})
-        </span>
+        <span className="chip chip-search">Searching…</span>
       </div>
     )
   }
-
-  return (
-    <details className="searches">
-      <summary>
-        🔍 {known.length} web search{known.length === 1 ? '' : 'es'}
-      </summary>
-      <ol>
-        {known.map((q, i) => (
-          <li key={i}>{q}</li>
-        ))}
-      </ol>
-    </details>
-  )
-}
-
-function Sources({ items }) {
-  if (!items?.length) return null
-  return (
-    <details className="sources">
-      <summary>{items.length} source{items.length === 1 ? '' : 's'}</summary>
-      <ol>
-        {items.map((s) => (
-          <li key={s.url}>
-            <a href={s.url} target="_blank" rel="noreferrer noopener">
-              {s.title}
-            </a>
-          </li>
-        ))}
-      </ol>
-    </details>
-  )
+  return null
 }
 
 export default function Message({ msg }) {
   if (msg.role === 'user') {
     return (
       <div className="msg msg-user">
-        <div className="bubble">{msg.content}</div>
+        <div className="bubble">
+          {msg.attachment && <div className="bubble-attach">PDF · {msg.attachment}</div>}
+          {msg.content}
+        </div>
       </div>
     )
   }
@@ -79,13 +110,20 @@ export default function Message({ msg }) {
       {msg.status && !msg.content && <div className="muted small">{msg.status}</div>}
       {msg.content ? (
         <div className="prose">
-          <Markdown remarkPlugins={[remarkGfm]}>{msg.content}</Markdown>
+          <Markdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              table: ExpandableTable,
+              a: ExternalLink,
+            }}
+          >
+            {msg.content}
+          </Markdown>
         </div>
       ) : (
         !msg.error && <span className="muted small">…</span>
       )}
       {msg.error && <div className="error">{msg.error}</div>}
-      <Sources items={msg.sources} />
     </div>
   )
 }

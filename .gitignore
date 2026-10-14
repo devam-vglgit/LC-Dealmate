@@ -1,10 +1,18 @@
 backend/.venv/
+# Any .env anywhere, matched by pattern rather than by path. test.env sat at the
+# repo root holding a plaintext cms_prod password and was not covered by the
+# explicit list below, so a single `git add .` would have committed production
+# database credentials.
+*.env
+!backend/.env.example
 backend/.env
 frontend/.env
 frontend/.env.local
 backend/__pycache__/
 backend/app/__pycache__/
 backend/data/conversations.json
+backend/data/cms_snapshot.json
+backend/data/uploads/
 backend/data/*.tmp
 frontend/node_modules/
 frontend/dist/
@@ -12,3 +20,6 @@ frontend/dist/
 
 # Local Netlify folder
 .netlify
+test.env
+netlify.toml
+render.yaml

@@ -1,5 +1,14 @@
-anthropic>=0.116.0
+anthropic>=0.122.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 pydantic>=2.9.0
 python-dotenv>=1.0.1
+# Live CMS contract data via DATABASE_URL.
+psycopg[binary]>=3.2.0
+# CMS contract PDFs (Azure Blob) — streamed to the browser only.
+azure-storage-blob>=12.24.0
+# AES-256-GCM decrypt of CMS blobs.
+cryptography>=44.0.0
+# Chat PDF attachments — text extract only; the file is not sent to the model.
+pypdf>=5.0.0
+python-multipart>=0.0.12

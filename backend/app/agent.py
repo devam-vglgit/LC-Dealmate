@@ -12,18 +12,27 @@ from typing import Any, AsyncIterator
 from anthropic import AsyncAnthropic, APIStatusError, APIConnectionError
 
 from .prompts import SYSTEM_PROMPT
+from .fetch_page import fetch_official_page
 
 MODEL = os.getenv("LC_MODEL", "claude-opus-5")
 EFFORT = os.getenv("LC_EFFORT", "high")
 MAX_TOKENS = int(os.getenv("LC_MAX_TOKENS", "16000"))
 
+try:
+    WEB_SEARCH_MAX_USES = max(1, int(os.getenv("LC_WEB_SEARCH_MAX_USES", "25")))
+except ValueError:
+    WEB_SEARCH_MAX_USES = 25
+
+# A server-tool turn can stop with `pause_turn` before it is finished; re-send to resume.
+try:
+    MAX_CONTINUATIONS = max(1, int(os.getenv("LC_MAX_CONTINUATIONS", "16")))
+except ValueError:
+    MAX_CONTINUATIONS = 16
+
 # Server-side fallback: if a safety classifier declines a request, the API retries it
 # on Anthropic's recommended fallback model instead of returning the refusal.
 ENABLE_FALLBACK = os.getenv("LC_ENABLE_FALLBACK", "1") != "0"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
-
-# A server-tool turn can stop with `pause_turn` before it is finished; re-send to resume.
-MAX_CONTINUATIONS = 4
 
 # `overloaded_error` arrives inside an already-open stream, so the SDK's own retry logic
 # never sees it — we retry here instead.
@@ -35,8 +44,40 @@ _BLOCK_MARKDOWN = re.compile(r"^\s*(#{1,6}\s|\||>\s?|[-*+]\s|\d+\.\s)")
 WEB_SEARCH_TOOL = {
     "type": "web_search_20260209",
     "name": "web_search",
-    "max_uses": 10,
+    "max_uses": WEB_SEARCH_MAX_USES,
+    "blocked_domains": [
+        "wikipedia.org",
+        "fandom.com",
+        "g2.com",
+        "capterra.com",
+        "trustradius.com",
+        "softwareadvice.com",
+        "aitools.fyi",
+        "producthunt.com",
+    ],
 }
+
+FETCH_PAGE_TOOL = {
+    "name": "fetch_official_page",
+    "description": (
+        "Download a live official vendor or counterparty page (product, service, "
+        "pricing, limits, coverage, or help) at this exact https URL and return "
+        "visible text. Use after web_search finds their own URL. Quote only facts "
+        "in the returned text. Do not fetch review sites, directories, or blogs."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "url": {
+                "type": "string",
+                "description": "Exact https URL from web_search (vendor's own site).",
+            }
+        },
+        "required": ["url"],
+    },
+}
+
+MAX_PAGE_FETCHES = 24
 
 client = AsyncAnthropic()
 
@@ -86,6 +127,46 @@ def _usage_event(totals: dict[str, int], pending_output: int = 0, final: bool = 
         "cache_read_input_tokens": totals["cache_read_input_tokens"],
         "cache_creation_input_tokens": totals["cache_creation_input_tokens"],
     }
+
+
+def _as_container_id(value: Any) -> str | None:
+    if isinstance(value, str) and value.startswith("container_"):
+        return value
+    return None
+
+
+def _container_id_from(obj: Any) -> str | None:
+    """Pull a code-execution container id off a Message, stream delta, or raw dict.
+
+    web_search runs in that sandbox. After pause_turn or a client tool call the
+    next request must send the same id, or the API returns 400.
+    """
+    if obj is None:
+        return None
+    found = _as_container_id(obj)
+    if found:
+        return found
+    found = _as_container_id(getattr(obj, "id", None))
+    if found:
+        return found
+    container = getattr(obj, "container", None)
+    if container is not None and container is not obj:
+        found = _container_id_from(container)
+        if found:
+            return found
+    extra = getattr(obj, "model_extra", None)
+    if isinstance(extra, dict):
+        found = _container_id_from(extra.get("container") or extra.get("id"))
+        if found:
+            return found
+    if isinstance(obj, dict):
+        found = _as_container_id(obj.get("id"))
+        if found:
+            return found
+        nested = obj.get("container")
+        if nested is not None and nested is not obj:
+            return _container_id_from(nested)
+    return None
 
 
 def _queries_from(content: list[Any]) -> list[str]:
@@ -162,7 +243,14 @@ async def stream_reply(
                     "and ask again.",
                 }
             else:
-                yield {"type": "error", "message": f"API error {e.status_code}: {e.message}"}
+                msg = e.message or ""
+                if e.status_code == 400 and "container_id is required" in msg:
+                    yield {
+                        "type": "error",
+                        "message": "Research was interrupted mid-search. Send the question again.",
+                    }
+                else:
+                    yield {"type": "error", "message": f"API error {e.status_code}: {e.message}"}
             return
 
         except APIConnectionError:
@@ -190,15 +278,19 @@ async def _run_turn(
         "model": MODEL,
         "max_tokens": MAX_TOKENS,
         "system": system,
-        "tools": [WEB_SEARCH_TOOL],
+        "tools": [WEB_SEARCH_TOOL, FETCH_PAGE_TOOL],
         "thinking": {"type": "adaptive", "display": "summarized"},
         "output_config": {"effort": EFFORT},
     }
+    betas: list[str] = []
     if ENABLE_FALLBACK:
-        request["betas"] = [FALLBACK_BETA]
+        betas.append(FALLBACK_BETA)
         request["fallbacks"] = "default"
 
-    stream_fn = client.beta.messages.stream if ENABLE_FALLBACK else client.messages.stream
+    if betas:
+        request["betas"] = betas
+
+    stream_fn = client.beta.messages.stream if betas else client.messages.stream
 
     # A turn emits several text blocks — one before each search, one after — and they
     # carry no separator. Usually the model resumes mid-sentence (or mid-table-row) and
@@ -219,11 +311,19 @@ async def _run_turn(
         "cache_creation_input_tokens": 0,
     }
 
+    fetches = 0
+    container_id: str | None = None
+
     for _ in range(MAX_CONTINUATIONS):
         turn_output = 0
+        if container_id:
+            request["container"] = container_id
         async with stream_fn(messages=convo, **request) as stream:
             async for event in stream:
                 if event.type == "message_start":
+                    found = _container_id_from(getattr(event, "message", None))
+                    if found:
+                        container_id = found
                     u = getattr(event.message, "usage", None)
                     if u is not None:
                         totals["input_tokens"] += getattr(u, "input_tokens", 0) or 0
@@ -236,6 +336,9 @@ async def _run_turn(
                         yield _usage_event(totals)
 
                 elif event.type == "message_delta":
+                    found = _container_id_from(getattr(event, "delta", None))
+                    if found:
+                        container_id = found
                     u = getattr(event, "usage", None)
                     out = getattr(u, "output_tokens", None) if u is not None else None
                     if out is not None:
@@ -247,6 +350,8 @@ async def _run_turn(
                     if kind == "server_tool_use":
                         # Placeholder — the query itself is only known after the turn.
                         yield {"type": "search_start"}
+                    elif kind == "tool_use":
+                        yield {"type": "status", "message": "Reading the official vendor page…"}
                     elif kind == "thinking":
                         yield {"type": "thinking_start"}
                     elif kind == "text":
@@ -260,7 +365,18 @@ async def _run_turn(
                             continue
                         if awaiting_block_start:
                             awaiting_block_start = False
-                            if prev_was_heading or _BLOCK_MARKDOWN.match(chunk):
+                            # "|" is ambiguous: it starts a table row and also
+                            # separates cells within one. A citation splits the
+                            # reply into separate text blocks mid-sentence, so a
+                            # cited figure inside a table resumes the next block
+                            # with "| next cell" — which read as a new block and
+                            # got a blank line injected into the middle of the
+                            # row, ending the table and spilling raw pipes into
+                            # the answer. Inside a row it is a separator.
+                            in_table_row = open_line.lstrip().startswith("|")
+                            if not in_table_row and (
+                                prev_was_heading or _BLOCK_MARKDOWN.match(chunk)
+                            ):
                                 yield {"type": "text", "text": "\n\n"}
                                 open_line = ""
                         open_line = (open_line + chunk).rsplit("\n", 1)[-1]
@@ -275,15 +391,17 @@ async def _run_turn(
 
             final = await stream.get_final_message()
 
+        found = _container_id_from(final)
+        if found:
+            container_id = found
+        if container_id:
+            request["container"] = container_id
+
         totals["output_tokens"] += turn_output
 
         queries = _queries_from(final.content)
         if queries:
             yield {"type": "searches", "queries": queries}
-
-        sources = _sources_from(final.content)
-        if sources:
-            yield {"type": "sources", "items": sources}
 
         if final.stop_reason == "refusal":
             yield {
@@ -292,6 +410,43 @@ async def _run_turn(
                 "Try rephrasing it.",
             }
             return
+
+        if final.stop_reason == "tool_use":
+            results: list[dict[str, Any]] = []
+            for block in final.content:
+                if getattr(block, "type", None) != "tool_use":
+                    continue
+                name = getattr(block, "name", None)
+                if name not in {"fetch_official_page", "fetch_pricing_page"}:
+                    results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": "ERROR: Unknown tool.",
+                        "is_error": True,
+                    })
+                    continue
+                fetches += 1
+                if fetches > MAX_PAGE_FETCHES:
+                    body = "ERROR: Page-fetch limit for this question. Use pages already retrieved."
+                else:
+                    params = getattr(block, "input", None) or {}
+                    url = params.get("url") if isinstance(params, dict) else None
+                    try:
+                        body = fetch_official_page(str(url or ""))
+                    except Exception as exc:
+                        logging.exception("official page fetch failed")
+                        body = f"ERROR: Could not read that page ({type(exc).__name__})."
+                results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": body,
+                })
+            if not results:
+                yield {"type": "error", "message": "The model requested a tool but sent no call."}
+                return
+            convo.append({"role": "assistant", "content": final.content})
+            convo.append({"role": "user", "content": results})
+            continue
 
         if final.stop_reason != "pause_turn":
             yield _usage_event(totals, final=True)

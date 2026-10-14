@@ -1,150 +1,126 @@
 # LC DealMate
 
-An AI negotiation agent for software and vendor spend. Ask it about the tools the
-company pays for, and it benchmarks them against live competitor pricing and tells you
-whether to renew, renegotiate, switch, or consolidate.
+Read-only AI advisor for ShopLC CMS contracts. It runs **inside CMS** (iframe
+or reverse-proxy), loads the live Postgres portfolio, streams PDFs to the
+browser only, and chats with Claude about pricing and alternatives.
 
 ```
-┌─────────────┐    SSE     ┌──────────────┐   web_search   ┌──────────┐
-│  React UI   │ ◀────────▶ │   FastAPI    │ ◀────────────▶ │  Claude  │
-│  (Vite)     │  /api/chat │              │                │  Opus 5  │
-└─────────────┘            └──────┬───────┘                └──────────┘
-                                  │
-                        software_inventory.json
+CMS  --JWT+contract id-->  DealMate SPA + FastAPI
+                                |  DATABASE_URL → CMS Postgres
+                                |  Azure Blob   → PDF to browser (never to the model)
+                                └─ Claude + web_search
 ```
 
-The inventory is injected into every request as system-prompt context, so the agent
-always answers against what the company actually pays for. Competitor pricing comes from
-Claude's server-side `web_search` tool at query time — no separate search API key, and
-prices are never answered from the model's memory.
+DealMate cannot add, edit, or delete contracts. There is no local inventory
+file and no document upload.
 
 ---
 
-## Setup
+## Run with CMS (UAT)
 
-Run everything from the project root.
+1. Copy `backend/.env.example` to `backend/.env`. Set `ANTHROPIC_API_KEY`,
+   `CMS_EMBED_SECRET` (same value CMS will sign with), `DATABASE_URL` pointing
+   at `cms-uat-postgres-uat-1`, and the Azure / encryption keys CMS already uses.
+2. Join the CMS network and build:
 
-**1. Backend** — create the virtualenv, then install into it:
+```
+docker compose up --build
+```
+
+`DATABASE_URL` in `.env` should look like:
+
+```
+DATABASE_URL=postgresql://cms_app_uat:PASSWORD@cms-uat-postgres-uat-1:5432/cms_uat
+```
+
+Open DealMate at `http://localhost:8101` (SPA served by FastAPI). Chat history
+and the CMS snapshot persist in the `dealmate-data` volume. CMS should iframe
+that origin (or a reverse-proxied path) with a token:
+
+```
+https://<dealmate>/?token=<jwt>&contract=<uuid>
+```
+
+### JWT CMS must mint
+
+HS256, same secret as `CMS_EMBED_SECRET` (or `SSO_JWT_SECRET`):
+
+```js
+jwt.sign({ sub: user.username }, process.env.CMS_EMBED_SECRET, {
+  algorithm: 'HS256',
+  expiresIn: '12h',
+})
+```
+
+DealMate exchanges that JWT for its own session. `contract` is optional — when
+present, that row opens in the dashboard.
+
+CSP `frame-ancestors` already allows `https://contractsuat.shoplc.com`,
+`https://contracts.shoplc.com`, and `http://localhost:38090`. Override with
+`LC_FRAME_ANCESTORS` if needed.
+
+---
+
+## Local development (without Docker)
+
+Two terminals from the repo root. Backend listens on **8101** (Vite proxies `/api`).
 
 ```
 python -m venv backend\.venv
-```
-
-```
 backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+backend\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --port 8101 --reload
 ```
-
-Create `backend\.env` (copy `.env.example`) and add your key:
-
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-**2. Frontend**
 
 ```
 npm --prefix frontend install
-```
-
-## Running
-
-Two terminals, both opened at the project root. These avoid `&&` and `cd` so they work
-in PowerShell as well as bash.
-
-Terminal 1 — backend on :8000
-
-```
-backend\.venv\Scripts\python.exe -m uvicorn app.main:app --app-dir backend --port 8000 --reload
-```
-
-Terminal 2 — frontend on :5173
-
-```
 npm --prefix frontend run dev
 ```
 
-Open http://localhost:5173. Vite proxies `/api` to port 8000, so both must be running.
-`Ctrl+C` stops either.
+Open http://localhost:5173. If `DATABASE_URL` is unset, DealMate falls back to
+`docker exec` into `cms-uat-postgres-uat-1` so Windows Docker Desktop still
+works. `GET /api/health` reports `cms.connected`, `cms_handoff`, and
+`sends_contracts_to_model`.
 
-`GET /api/health` reports whether credentials resolved — check it first if chat errors.
+Optional local login: set `LC_AUTH_USERNAME` / `LC_AUTH_PASSWORD`. When those
+are blank and `CMS_EMBED_SECRET` is set, the only sign-in is the CMS JWT.
 
 ---
 
-## Loading the real inventory
+## What reaches the model
 
-Replace the `software` array in `backend/data/software_inventory.json`. It currently
-holds four clearly-marked **sample rows** so the app runs before the real data exists.
+Governed by `LC_SEND_CONTRACTS_TO_MODEL` (default `0`). Health reports the live
+value as `sends_contracts_to_model`.
 
-The file is re-read on every request — edit it and ask the next question, no restart.
-
-Only `vendor` and `product` are required; the agent works with whatever else is filled
-in, and richer rows produce sharper recommendations.
-
-| Field | Why the agent wants it |
+| Setting | Model sees |
 |---|---|
-| `vendor`, `product`, `plan` | Identifies what to benchmark against |
-| `seats`, `unit_price_annual`, `annual_cost` | Computes per-seat rate and savings |
-| `renewal_date` | Drives urgency and the renewal queue |
-| `notice_period_days` | Derives the real deadline — the cancellation cutoff, not the renewal date |
-| `auto_renew` | Whether silence costs you another year |
-| `utilization_pct` | The strongest lever for a seat-reduction ask |
-| `business_criticality` | How seriously to weigh switching risk |
-| `owner`, `category`, `notes` | Routing and context |
+| `0` | Nothing from CMS. General pricing questions only. |
+| `1` | De-identified contract rows (`app/redact.py`) plus a short CMS excerpt for the open contract. |
 
-Derived fields (`days_until_renewal`, `days_until_cancellation_deadline`,
-`total_annual_spend`) are computed server-side in `app/inventory.py` — don't put them in
-the JSON.
+Never sent, at either setting: PDFs, full document text, ShopLC identity,
+`SLCI-VA-…` codes, individual people's names (shown as `[an individual contractor]`).
+
+PDFs are decrypted and streamed to **this browser** via
+`GET /api/cms/contracts/{id}/document`.
+
+Request Anthropic Zero Data Retention before turning the flag on.
 
 ---
 
 ## Layout
 
 ```
-backend/
-  app/
-    main.py        FastAPI routes; SSE framing
-    agent.py       Claude streaming loop, web search, error handling
-    prompts.py     System prompt — the agent's negotiation playbook
-    inventory.py   Loads/enriches the inventory, renders it for the model
-  data/
-    software_inventory.json    ← replace this
-frontend/
-  src/
-    App.jsx        Conversation state, streaming reducer
-    api.js         SSE-over-fetch client
-    components/    InventoryPanel, Message
+backend/app/
+  main.py         API, CMS JWT exchange, SPA in production
+  auth.py         Local login + CMS HS256 handoff
+  cms.py          Portfolio from Postgres
+  cms_db.py       DATABASE_URL, then optional docker-exec fallback
+  cms_files.py    Azure Blob decrypt → browser
+  inventory.py    Shapes CMS rows; redacted blocks for the model
+  redact.py       Outbound allowlist
+  agent.py        Claude streaming + web_search
+  prompts.py      Negotiation playbook
+frontend/src/     React SPA (embed + ?contract=)
 ```
 
-To change how the agent reasons about a negotiation, edit `prompts.py` — that file, not
-the code, is where the product behaviour lives.
-
-## Configuration
-
-Set in `backend/.env`:
-
-| Variable | Default | Notes |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | — | Required |
-| `LC_MODEL` | `claude-opus-5` | |
-| `LC_EFFORT` | `high` | `low`/`medium` are cheaper and faster; worth testing |
-| `LC_MAX_TOKENS` | `16000` | |
-| `LC_ENABLE_FALLBACK` | `1` | Server-side fallback: if a safety classifier declines a request, the API retries it on a fallback model instead of returning the refusal. Set `0` to disable. |
-
----
-
-## Scope
-
-The agent drafts; it does not act. It has no ability to contact a vendor, sign, or
-commit to anything — outbound negotiation stays a human step by design.
-
-Pricing it surfaces is research, not a quote. Public list prices are a benchmark;
-enterprise tiers are usually unpublished, and the agent is instructed to say so rather
-than invent a number.
-
-## Not built yet
-
-- Persistence — conversations are in-memory and lost on refresh
-- Auth — the API is unauthenticated; bind it to localhost or put it behind SSO before
-  sharing
-- Inventory upload UI — the JSON file is edited by hand today
-- Renewal alerting — the panel shows the queue, but nothing emails anyone
+Edit `prompts.py` to change how the agent answers. The model is read-only: it
+cannot change CMS.
