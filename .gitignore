@@ -12,6 +12,7 @@ backend/__pycache__/
 backend/app/__pycache__/
 backend/data/conversations.json
 backend/data/cms_snapshot.json
+backend/data/chat.log.jsonl
 backend/data/uploads/
 backend/data/*.tmp
 frontend/node_modules/

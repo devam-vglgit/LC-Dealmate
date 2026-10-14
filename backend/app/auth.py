@@ -140,6 +140,18 @@ def exchange_cms_token(cms_jwt: str) -> str | None:
     return issue_token(user)
 
 
+def username_from_token(token: str | None) -> str | None:
+    if not token or not verify_token(token):
+        return None
+    try:
+        body, _sig = token.split(".", 1)
+        payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except Exception:
+        return None
+    user = payload.get("u")
+    return str(user) if user else None
+
+
 def token_from_header(header: str | None) -> str | None:
     if not header:
         return None

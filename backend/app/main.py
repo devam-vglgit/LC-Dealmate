@@ -24,6 +24,7 @@ from . import cms as cms_mod  # noqa: E402
 from . import cms_files as cms_files_mod  # noqa: E402
 from . import conversations as conv_mod  # noqa: E402
 from . import inventory as inv_mod  # noqa: E402
+from . import chat_log as chat_log_mod  # noqa: E402
 from . import uploads as uploads_mod  # noqa: E402
 from .agent import (  # noqa: E402
     MODEL,
@@ -246,7 +247,7 @@ def get_attachment_file(attachment_id: str) -> Response:
 
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest) -> StreamingResponse:
+async def chat(req: ChatRequest, request: Request) -> StreamingResponse:
     # What the model receives is decided entirely by LC_SEND_CONTRACTS_TO_MODEL.
     # Off: both blocks say the data is withheld and no CMS row is read at all.
     # On: de-identified rows via redact.py — never documents, which stay behind
@@ -287,6 +288,7 @@ async def chat(req: ChatRequest) -> StreamingResponse:
         user_message["attachment"] = attachment["filename"]
     conv_mod.append_message(conv_id, user_message)
     history = conv_mod.history_for_model(conv_id)
+    chat_user = auth.username_from_token(auth.token_from_header(request.headers.get("authorization")))
 
     def frame(payload: dict[str, Any]) -> str:
         return f"data: {json.dumps(payload)}\n\n"
@@ -310,6 +312,8 @@ async def chat(req: ChatRequest) -> StreamingResponse:
                     reply["searches"] = event["queries"]
                 elif kind == "sources":
                     reply["sources"] = event["items"]
+                elif kind == "error":
+                    reply["error"] = event.get("message")
                 elif kind == "usage" and event.get("final"):
                     reply["usage"] = {k: v for k, v in event.items() if k.endswith("_tokens")}
                 yield frame(event)
@@ -319,6 +323,16 @@ async def chat(req: ChatRequest) -> StreamingResponse:
             # interrupted answer is still saved rather than silently lost.
             if reply["content"]:
                 conv_mod.append_message(conv_id, reply)
+            chat_log_mod.record({
+                "user": chat_user,
+                "conversation_id": conv_id,
+                "focus_id": focus_id,
+                "attachment": attachment["filename"] if attachment else None,
+                "question": req.message,
+                "answer": reply.get("content") or "",
+                "error": reply.get("error"),
+                "searches": reply.get("searches") or [],
+            })
 
     return StreamingResponse(
         sse(),
