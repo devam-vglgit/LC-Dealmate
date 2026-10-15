@@ -102,6 +102,8 @@ _COMPANY_MARKERS = frozenset(
     intelligence analytics consulting consultants ministries church foundation
     university institute college school hospital bank financial insurance
     sales reach frontier post outlet channel channels station stations
+    lab labs laboratory laboratories studio software firm logistics
+    pte pty sarl
     """.split()
 )
 

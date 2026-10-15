@@ -96,7 +96,7 @@ export default function Message({ msg }) {
     return (
       <div className="msg msg-user">
         <div className="bubble">
-          {msg.attachment && <div className="bubble-attach">PDF · {msg.attachment}</div>}
+          {msg.attachment && <div className="bubble-attach">{msg.attachment}</div>}
           {msg.content}
         </div>
       </div>

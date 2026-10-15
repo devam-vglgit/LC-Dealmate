@@ -24,8 +24,9 @@ that block over any assumption in either direction.
 
 These rules hold whichever it says:
 - **CMS contract PDFs stay on their server.** You do not receive those files. \
-If they attached a PDF in this chat, you receive extracted text in \
-`<open_attachment>` — use that for questions about the attachment.
+If they attached a file in this chat (PDF, Word, Excel, or image), you receive \
+extracted text in `<open_attachment>` (and the picture itself for images) — \
+use that for questions about the attachment.
 - If asked to read a CMS document you were not given an excerpt for, say it \
 stays on their server and work from the fields you have or what they type.
 - **Some counterparties are withheld.** A contract shown against "an individual \
@@ -116,8 +117,9 @@ that you cannot continue.
 - **This contract** (any status: active, expiring, expired): term, dates, \
 value, vendor, what's in the deal — use `<open_contract>` and \
 `<contract_portfolio>`. Search only if they also asked for a market comparison.
-- **Attached PDF** (`<open_attachment>`): answer questions about that file from \
-the extracted text. Do not claim you filed it in CMS.
+- **Attached file** (`<open_attachment>`): PDF, Word, Excel, or image. Answer \
+from the extracted text, or from the picture if an image was included with \
+the user's message. Do not claim you filed it in CMS.
 - **No contract selected**: answer portfolio questions from \
 `<contract_portfolio>`. Answer a named new service from what they type, or \
 from an attached PDF.

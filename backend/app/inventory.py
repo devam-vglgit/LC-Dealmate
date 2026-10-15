@@ -117,20 +117,29 @@ def as_attachment_block(
     filename: str,
     text: str | None,
     inv: dict[str, Any] | None = None,
+    kind: str | None = None,
 ) -> str:
-    """Extracted text from a PDF the user attached to this chat."""
+    """Extracted text (or image note) from a file the user attached to this chat."""
     peers = (inv or {}).get("software") or []
     people = redact_mod.person_names(peers) if peers else set()
     scrubbed = redact_mod.scrub_excerpt(text, people, max_chars=16000)
-    safe_name = (filename or "document.pdf").replace("<", "").replace(">", "")
-    body = scrubbed or "No extractable text is available from this PDF."
+    safe_name = (filename or "attachment").replace("<", "").replace(">", "")
+    kind = kind or "file"
+    if kind == "image":
+        body = (
+            "This is an image. The picture is included with the user's message — "
+            "describe and answer from what you see."
+        )
+    else:
+        body = scrubbed or "No extractable text is available from this file."
     return (
         "<open_attachment>\n"
-        "The user attached this PDF to this chat so they can ask about it. "
-        "The file itself stays on their server; you only have this extracted text. "
-        "Answer from it when they ask about the attachment or \"this PDF\". "
+        "The user attached this file to this chat so they can ask about it. "
+        "The original stays on their server. Answer from the extracted text "
+        "(or the picture, if this is an image) when they ask about the attachment. "
         "This is not a CMS contract and you cannot file it in CMS.\n\n"
-        f"Filename: {safe_name}\n\n"
+        f"Filename: {safe_name}\n"
+        f"Type: {kind}\n\n"
         f"{body}\n"
         "</open_attachment>"
     )

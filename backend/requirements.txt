@@ -9,6 +9,8 @@ psycopg[binary]>=3.2.0
 azure-storage-blob>=12.24.0
 # AES-256-GCM decrypt of CMS blobs.
 cryptography>=44.0.0
-# Chat PDF attachments — text extract only; the file is not sent to the model.
+# Chat attachments — text extract for PDF/Word/Excel; images go to the model as pictures.
 pypdf>=5.0.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
 python-multipart>=0.0.12

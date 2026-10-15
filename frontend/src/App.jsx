@@ -364,7 +364,7 @@ export default function App() {
     ? `Ask about ${attachment.filename}…`
     : focusItem
       ? `Ask about ${focusItem.vendor || focusItem.product}, or a new service…`
-      : 'Ask about a contract, a vendor, a new service, or attach a PDF…'
+      : 'Ask about a contract, a vendor, a new service, or attach a file…'
 
   async function handleAttach(file) {
     if (!file || attaching) return
@@ -477,7 +477,7 @@ export default function App() {
               <p className="muted">
                 {focusItem
                   ? 'Ask about this contract, compare vendors, or research a new service. The AI cannot change the PDF.'
-                  : 'Ask about the portfolio, attach a new PDF, or research a service you do not have yet.'}
+                  : 'Ask about the portfolio, attach a file, or research a service you do not have yet.'}
               </p>
               {suggestionGroups.map((g) => (
                 <SuggestionGroup key={g.label} label={g.label} items={g.items} onPick={send} />
@@ -492,7 +492,7 @@ export default function App() {
         <div className="composer-wrap">
           {attachment && (
             <div className="attach-chip">
-              <span title={attachment.filename}>PDF · {attachment.filename}</span>
+              <span title={attachment.filename}>{attachment.filename}</span>
               <button type="button" onClick={() => setAttachment(null)} aria-label="Remove attachment">
                 ×
               </button>
@@ -509,7 +509,7 @@ export default function App() {
             <input
               ref={fileRef}
               type="file"
-              accept="application/pdf,.pdf"
+              accept=".pdf,.docx,.xlsx,.jpg,.jpeg,.png,.webp,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/jpeg,image/png,image/webp"
               hidden
               onChange={(e) => handleAttach(e.target.files?.[0])}
             />
@@ -529,11 +529,11 @@ export default function App() {
               type="button"
               className="attach-btn"
               disabled={busy || attaching}
-              title="Attach a PDF to this chat"
-              aria-label="Attach a PDF"
+              title="Attach PDF, Word, Excel, or image"
+              aria-label="Attach a file"
               onClick={() => fileRef.current?.click()}
             >
-              {attaching ? 'Uploading…' : 'Attach PDF'}
+              {attaching ? 'Uploading…' : 'Attach file'}
             </button>
             {busy ? (
               <button type="button" className="stop" onClick={() => abortRef.current?.abort()}>

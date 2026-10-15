@@ -217,10 +217,10 @@ def delete_conversation(conversation_id: str) -> dict[str, Any]:
 
 @app.post("/api/attachments")
 async def upload_attachment(file: UploadFile = File(...)) -> dict[str, Any]:
-    """Store a PDF for this chat and extract text for the model. Not written to CMS."""
+    """Store a chat file (PDF, Word, Excel, image) and extract text. Not written to CMS."""
     data = await file.read()
     try:
-        return uploads_mod.save_pdf(file.filename or "document.pdf", data)
+        return uploads_mod.save_pdf(file.filename or "document", data)
     except uploads_mod.UploadError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
@@ -237,7 +237,7 @@ def get_attachment_file(attachment_id: str) -> Response:
     )
     return Response(
         content=data,
-        media_type="application/pdf",
+        media_type=rec.get("media_type") or "application/octet-stream",
         headers={
             "Content-Disposition": f'inline; filename="{ascii_name}"',
             "Cache-Control": "private, no-store",
@@ -279,7 +279,12 @@ async def chat(req: ChatRequest, request: Request) -> StreamingResponse:
     if attachment:
         conv_mod.set_attachment(conv_id, attachment["id"], attachment["filename"])
         focus_parts.append(
-            inv_mod.as_attachment_block(attachment["filename"], attachment["text"], inv)
+            inv_mod.as_attachment_block(
+                attachment["filename"],
+                attachment["text"],
+                inv,
+                kind=attachment.get("kind"),
+            )
         )
     focus_block = "\n\n".join(focus_parts) or None
 
@@ -288,6 +293,8 @@ async def chat(req: ChatRequest, request: Request) -> StreamingResponse:
         user_message["attachment"] = attachment["filename"]
     conv_mod.append_message(conv_id, user_message)
     history = conv_mod.history_for_model(conv_id)
+    if attachment:
+        history = uploads_mod.with_image_on_last_user(history, attachment)
     chat_user = auth.username_from_token(auth.token_from_header(request.headers.get("authorization")))
 
     def frame(payload: dict[str, Any]) -> str:
