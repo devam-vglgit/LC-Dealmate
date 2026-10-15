@@ -103,7 +103,67 @@ _COMPANY_MARKERS = frozenset(
     university institute college school hospital bank financial insurance
     sales reach frontier post outlet channel channels station stations
     lab labs laboratory laboratories studio software firm logistics
-    pte pty sarl
+    pte pty sarl formulation formulations pharma pharmaceutical
+    chemical chemicals manufacturing manufacturer wholesale retail
+    """.split()
+)
+
+# First names used to spot private people (presenters, hosts, models).
+# Unknown two-word brands are not treated as people just because they are
+# Title Case — otherwise vendors like Ambi Labs or Syncom Formulation get
+# withheld and cannot be researched.
+_GIVEN_NAMES = frozenset(
+    w.lower()
+    for w in """
+    aaron abigail abraham adam adrian aditya agnes ajay akash alan albert alex
+    alexander alexandra alice alicia alisha allison alok amanda amit amy andrea
+    andrew angela anil anita anjali ankit ann anna anne annette anthony anusha
+    april arjun arun arya asha ashley ashok austin ava barbara benjamin betty
+    beverly billy bobby brandon brenda brian bruce bryan caleb calvin cameron
+    carl carlos carol caroline carolyn casey catherine cathy chad charles
+    charlotte cheryl chris christian christina christine christopher cindy
+    claire clara cody colin colleen connor corey craig crystal curtis cynthia
+    daisy dale damon dan daniel danielle danny darren dave david dean debbie
+    deborah debra deepak denise dennis derek dev devin diane donald donna doris
+    dorothy douglas drew dwayne dylan edward edwin eileen elaine eleanor elena
+    eli elias elijah elisa elizabeth ella ellen ellie emily emma eric erica erik
+    erin ethan eugene eva evan evelyn farah felicia fernando fiona frances
+    francis frank franklin fred frederick gail gary gaurav gavin gene george
+    gerald gina glenn gloria gordon grace greg gregory gwen hank hannah hari
+    harold harry harsh harvey heather heidi helen henry holly howard hugh ian
+    irene isaac isabel isabella ishaan ivan jack jackie jackson jacob jade jake
+    james jamie jane janet janice jared jason jay jean jeff jeffrey jennifer
+    jenny jeremy jerome jerry jesse jessica jill jim jimmy joan joanna joanne
+    jodi joe joel john johnny jonathan jordan jose joseph josh joshua joy joyce
+    juan judith judy julia julian julie justin kaitlin kara karen kari karan
+    karen karl kate katelyn katherine kathleen kathryn kathy katie kayla keith
+    kelly kelvin ken kenneth kenny kevin khalid kim kimberly kiran kirk kristen
+    kristin kristina kurt kyle lacey lance larry laura lauren laurie lawrence
+    leah lee leo leon leonard leslie levi lewis liam lillian lily linda lindsay
+    lisa liz logan lois lori louis louise lucas lucy luis luke lynn mackenzie
+    madeline madison malik mamta mandi manoj manuel marc marcia marcus margaret
+    maria mariah marianne marie marilyn mario marisa marissa mark martha martin
+    marty marvin mary mason mathew matt matthew maureen maurice max maya megan
+    meghan mehdi melissa melvin mercedes mia michael michelle miguel mike milan
+    mildred mohammad mohammed mohit molly monica morgan mukesh myra nancy naomi
+    natalie nathan nathaniel neha neil nicholas nick nicole nina nisha noah
+    nolan norman olivia oscar owen padma pam pamela parker patricia patrick
+    paul paula perry peter phil philip phyllis pooja poonam pradeep prakash
+    pratik preeti preston priya priyanka rachel rafael rahul raj rajan rajesh
+    rakesh ralph ram ramesh randy raul ravi ray raymond rebecca reena regina
+    rekha renee ricardo richard rick ricky ritika rob robbie robert robin
+    roderick roger rohan ronald rosa rose rosemary ross roy ruben ruby russell
+    ruth ryan saffron sally sam samantha samuel sandra sandy sanjay santosh
+    sara sarah saurabh scott sean sebastian sergio seth shane shannon shari
+    sharon shaun shawn sheila shelley sherry sherri shirley shreya sid siddharth
+    simon sonia sonya sophia spencer stacey stacy stanley stella stephanie
+    stephen steve steven stuart sue susan susanne suzanne swati sydney sylvia
+    tammy tanya tara taylor ted terry theodore theresa thomas tiffany tim
+    timothy todd tom tommy tony tracey tracy travis trevor troy tyler tyrone
+    valerie vance vaughn vernon veronica vicki vickie victor victoria vijay
+    vikram vincent viola violet virgil vivek vivian wade walker wallace walter
+    warren wayne wendy wesley whitney will william willie wilson xavier
+    yasmin yolanda yvette yvonne zach zachary
     """.split()
 )
 
@@ -123,11 +183,7 @@ def _tokens(name: str) -> list[str]:
 
 
 def looks_like_company(name: str) -> bool:
-    """True when anything in the name marks it as an organisation.
-
-    Deliberately tested first and generously: a missed company marker only costs
-    a lost benchmark, whereas a missed *person* marker leaks a private name.
-    """
+    """True when anything in the name marks it as an organisation."""
     if not name:
         return False
     if _WEBBY.search(name):
@@ -147,17 +203,18 @@ def looks_like_company(name: str) -> bool:
 
 
 def looks_like_person(name: str) -> bool:
-    """True for a plain personal name — two or three words, no org markers.
+    """True only for a likely private person (presenter, host, model).
 
-    Only reached when `looks_like_company` found nothing, so this decides the
-    residue rather than competing with it. A middle initial ("Sherry W. Witt")
-    and a generational suffix ("Daniel J. Dennis. Jr.") both stay personal.
+    Two Title Case words are not enough — that shape is shared with vendors.
+    Need a known given name, a middle initial, or Jr/Sr/II so unknown companies
+    stay visible to the model and can be researched.
     """
     if not name or looks_like_company(name):
         return False
 
-    parts = [t.strip(".,") for t in _tokens(name)]
-    parts = [p for p in parts if p and p.lower() not in _PERSON_SUFFIX]
+    raw = [t.strip(".,") for t in _tokens(name)]
+    had_suffix = any(p.lower() in _PERSON_SUFFIX for p in raw)
+    parts = [p for p in raw if p and p.lower() not in _PERSON_SUFFIX]
     if not 2 <= len(parts) <= 3:
         return False
     for part in parts:
@@ -168,7 +225,9 @@ def looks_like_person(name: str) -> bool:
             return False
         if not part[0].isupper():
             return False
-    return True
+    if had_suffix or any(len(p) == 1 for p in parts):
+        return True
+    return parts[0].lower() in _GIVEN_NAMES
 
 
 # ------------------------------------------------------------------ scrubbing
